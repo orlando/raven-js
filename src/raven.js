@@ -33,7 +33,10 @@ function Raven() {
     this._globalServer = null;
     this._globalKey = null;
     this._globalProject = null;
-    this._globalContext = {};
+    this._globalContext = {
+      contexts: {}
+    };
+    this._globalContext.contexts = {};
     this._globalOptions = {
         logger: 'javascript',
         ignoreErrors: [],
@@ -106,7 +109,7 @@ Raven.prototype = {
         if (options) {
             each(options, function(key, value){
                 // tags and extra are special and need to be put into context
-                if (key === 'tags' || key === 'extra' || key === 'user') {
+                if (['contexts', 'extra', 'tags', 'user'].indexOf(key) > -1) {
                     self._globalContext[key] = value;
                 } else {
                     globalOptions[key] = value;
@@ -455,14 +458,26 @@ Raven.prototype = {
     },
 
     /*
-     * Set/clear Contexts interface to be sent along with the payload.
+     * Set/clear contexts interface to be sent along with the payload.
      *
-     * @param {object} contexts An object representing Contexts data [optional]
+     * @param {string} context A string representing the contexts key
+     * @param {object} value An object representing the context data [optional]
      * @return {Raven}
      */
-    setContextsInterface: function(contexts) {
+    setContext: function(context, value) {
+        // do nothing if context key is missing
+        if (isUndefined(context)) {
+            return this;
+        }
+
+        // remove key from contexts if value is missing
+        if (isUndefined(value)) {
+          delete this._globalContext.contexts[context];
+          return this;
+        }
+
         // Intentionally do not merge here since that's an unexpected behavior.
-        this._globalContext.contexts = contexts;
+        this._globalContext.contexts[context] = value;
 
         return this;
     },
@@ -1375,7 +1390,7 @@ Raven.prototype = {
             data.user = this._globalContext.user;
         }
 
-        if (this._globalContext.contexts) {
+        if (!isEmptyObject(this._globalContext.contexts)) {
             // sentry.interfaces.Contexts
             data.contexts = this._globalContext.contexts;
         }

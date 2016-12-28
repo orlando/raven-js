@@ -1535,17 +1535,19 @@ describe('Raven (public API)', function() {
             assert.isTrue(Raven._logDebug.called);
         });
 
-        it('should populate global context for tags, extra, and user', function() {
-            Raven.config('//abc@example.com/sentry/2', {
-                tags: {tag1: 'tagValue1'},
+        it('should populate global context for contexts, extra, tags, and user', function() {
+          Raven.config('//abc@example.com/sentry/2', {
+                contexts: {os: {name: 'Windows'}},
                 extra: {extra1: 'extraValue1'},
+                tags: {tag1: 'tagValue1'},
                 user: {name: 'Matt'},
                 whitelistUrls: ['not-a-context-value']
             });
             assert.deepEqual(Raven._globalContext, {
-                tags: {tag1: 'tagValue1'},
+                contexts: {os: {name: 'Windows'}},
                 extra: {extra1: 'extraValue1'},
-                user: {name: 'Matt'},
+                tags: {tag1: 'tagValue1'},
+                user: {name: 'Matt'}
             });
         });
 
@@ -1842,22 +1844,35 @@ describe('Raven (public API)', function() {
         });
     });
 
-    describe('.setContextsInterface', function() {
-        it('should set the globalContext.contexts object', function() {
-            Raven.setContextsInterface({device: {family: 'asus', type: 'device'}});
+    describe('.setContext', function() {
+        it('should set the globalContext.contexts[key]object', function() {
+            Raven.setContext('device', {family: 'asus', type: 'device'});
             assert.deepEqual(Raven._globalContext.contexts, {device: {family: 'asus', type: 'device'}});
         });
 
         it('should not merge globalContext.device object, but rewrite', function () {
             Raven._globalContext.contexts = {device: {family: 'asus', type: 'device'}};
-            Raven.setContextsInterface({os: {name: 'Android'}});
-            assert.deepEqual(Raven._globalContext.contexts, {os: {name: 'Android'}});
+            Raven.setContext('device', {family: 'motorola', type: 'device'});
+            assert.deepEqual(Raven._globalContext.contexts.device, {family: 'motorola', type: 'device'});
         });
 
-        it('should clear the globalContext.device with no arguments', function() {
+        it('should only replace the key passed as argument', function() {
             Raven._globalContext.contexts = {device: {family: 'asus', type: 'device'}};
-            Raven.setContextsInterface();
-            assert.isUndefined(Raven._globalContext.contexts);
+            Raven.setContext('os', {name: 'Windows', type: 'os'});
+            assert.deepEqual(Raven._globalContext.contexts.device, {family: 'asus', type: 'device'});
+            assert.deepEqual(Raven._globalContext.contexts.os, {name: 'Windows', type: 'os'});
+        });
+
+        it('should clear the globalContext.contexts[key] with no arguments', function() {
+            Raven._globalContext.contexts = {device: {family: 'asus', type: 'device'}};
+            Raven.setContext('device');
+            assert.isUndefined(Raven._globalContext.contexts.device);
+        });
+
+        it('should do nothing if context key is not provided', function() {
+            Raven._globalContext.contexts = {device: {family: 'asus', type: 'device'}};
+            Raven.setContext();
+            assert.deepEqual(Raven._globalContext.contexts, {device: {family: 'asus', type: 'device'}});
         });
     });
 
