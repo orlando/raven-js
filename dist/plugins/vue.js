@@ -1,10 +1,10 @@
-/*! Raven.js 3.9.1 (79bc1ae) | github.com/getsentry/raven-js */
+/*! Raven.js 3.11.0 (c2f43d7) | github.com/getsentry/raven-js */
 
 /*
  * Includes TraceKit
  * https://github.com/getsentry/TraceKit
  *
- * Copyright 2016 Matt Robenolt and other contributors
+ * Copyright 2017 Matt Robenolt and other contributors
  * Released under the BSD license
  * https://github.com/getsentry/raven-js/blob/master/LICENSE
  *
@@ -17,6 +17,17 @@
  */
 'use strict';
 
+function formatComponentName (vm) {
+    if (vm.$root === vm) {
+        return 'root instance'
+    }
+    var name = vm._isVue
+        ? vm.$options.name || vm.$options._componentTag
+        : vm.name
+    return (name ? 'component <' + name + '>' : 'anonymous component') +
+        (vm._isVue && vm.$options.__file ? ' at ' + vm.$options.__file  : '')
+}
+
 function vuePlugin(Raven, Vue) {
     Vue = Vue || window.Vue;
 
@@ -27,7 +38,7 @@ function vuePlugin(Raven, Vue) {
     Vue.config.errorHandler = function VueErrorHandler(error, vm) {
         Raven.captureException(error, {
           extra: {
-            componentName: Vue.util.formatComponentName(vm),
+            componentName: formatComponentName(vm),
             propsData: vm.$options.propsData
           }
         });

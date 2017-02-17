@@ -48,11 +48,11 @@ describe('globals', function() {
     describe('getHttpData', function() {
         var data;
 
-        beforeEach(function () {
-            data = Raven._getHttpData();
-        });
+        describe('with document and navigator', function() {
+            beforeEach(function () {
+                data = Raven._getHttpData();
+            });
 
-        describe('with document', function() {
             it('should have a url', function() {
                 assert.equal(data.url, window.location.href);
             });
@@ -71,13 +71,17 @@ describe('globals', function() {
             });
         });
 
-        // describe('without document', function () {
-        //     it('should return undefined if no document', function () {
-        //         hasDocument = false;
-        //         var data = getHttpData();
-        //         assert.isUndefined(data);
-        //     });
-        // });
+        it('without document but with navigator should return user-agent', function () {
+            Raven._hasDocument = false;
+            data = Raven._getHttpData();
+            assert.equal(data.headers['User-Agent'], navigator.userAgent);
+        });
+
+        it('with neither document nor navigator should return undefined', function () {
+          Raven._hasDocument = false;
+          Raven._hasNavigator = false;
+          assert.isUndefined(Raven._getHttpData());
+        });
     });
 
     describe('trimPacket', function() {
@@ -1004,7 +1008,7 @@ describe('globals', function() {
                 extra: {'session:duration': 100},
             });
             assert.deepEqual(opts.auth, {
-                sentry_client: 'raven-js/3.9.1',
+                sentry_client: 'raven-js/3.11.0',
                 sentry_key: 'abc',
                 sentry_version: '7'
             });
@@ -1051,7 +1055,7 @@ describe('globals', function() {
                 extra: {'session:duration': 100},
             });
             assert.deepEqual(opts.auth, {
-                sentry_client: 'raven-js/3.9.1',
+                sentry_client: 'raven-js/3.11.0',
                 sentry_key: 'abc',
                 sentry_secret: 'def',
                 sentry_version: '7'
@@ -1137,6 +1141,95 @@ describe('globals', function() {
             assert.equal(data.message, shortMessage);
             assert.equal(data.exception.values[0].value, shortMessage);
         });
+
+        it('should bail out if time elapsed does not exceed backoffDuration', function () {
+            this.sinon.stub(Raven, 'isSetup').returns(true);
+            this.sinon.stub(Raven, '_makeRequest');
+
+            Raven._backoffDuration = 1000;
+            Raven._backoffStart = 100;
+            this.clock.tick(100); // tick 100 ms - NOT past backoff duration
+
+            Raven._send({message: 'bar'});
+            assert.isFalse(Raven._makeRequest.called);
+        });
+
+        it('should proceed if time elapsed exceeds backoffDuration', function () {
+            this.sinon.stub(Raven, 'isSetup').returns(true);
+            this.sinon.stub(Raven, '_makeRequest');
+
+            Raven._backoffDuration = 1000;
+            Raven._backoffStart = 100;
+            this.clock.tick(1000); // advance clock 1000 ms - past backoff duration
+
+            Raven._send({message: 'bar'});
+            assert.isTrue(Raven._makeRequest.called);
+        });
+
+        it('should set backoffDuration and backoffStart if onError is fired w/ 429 response', function () {
+            this.sinon.stub(Raven, 'isSetup').returns(true);
+            this.sinon.stub(Raven, '_makeRequest');
+
+            Raven._send({message: 'bar'});
+            var opts = Raven._makeRequest.lastCall.args[0];
+            var mockError = new Error('429: Too many requests');
+            mockError.request = {
+                status: 429
+            };
+            opts.onError(mockError);
+
+            assert.equal(Raven._backoffStart, 100); // clock is at 100ms
+            assert.equal(Raven._backoffDuration, 1000);
+
+            this.clock.tick(1); // only 1ms
+            opts.onError(mockError);
+
+            // since the backoff has started, a subsequent 429 within the backoff period
+            // should not not the start/duration
+            assert.equal(Raven._backoffStart, 100);
+            assert.equal(Raven._backoffDuration, 1000);
+
+            this.clock.tick(1000); // move past backoff period
+            opts.onError(mockError);
+
+            // another failure has occurred, this time *after* the backoff period - should increase
+            assert.equal(Raven._backoffStart, 1101);
+            assert.equal(Raven._backoffDuration, 2000);
+        });
+
+
+        it('should set backoffDuration to value of Retry-If header if present', function () {
+            this.sinon.stub(Raven, 'isSetup').returns(true);
+            this.sinon.stub(Raven, '_makeRequest');
+
+            Raven._send({message: 'bar'});
+            var opts = Raven._makeRequest.lastCall.args[0];
+            var mockError = new Error('401: Unauthorized');
+            mockError.request = {
+                status: 401,
+                getResponseHeader: sinon.stub().withArgs('Retry-After').returns('1337')
+            };
+            opts.onError(mockError);
+
+            assert.equal(Raven._backoffStart, 100); // clock is at 100ms
+            assert.equal(Raven._backoffDuration, 1337); // converted to int
+        });
+
+        it('should reset backoffDuration and backoffStart if onSuccess is fired (200)', function () {
+            this.sinon.stub(Raven, 'isSetup').returns(true);
+            this.sinon.stub(Raven, '_makeRequest');
+
+            Raven._backoffDuration = 1000;
+            Raven._backoffStart = 0;
+            this.clock.tick(1001); // tick clock just past time necessary
+
+            Raven._send({message: 'bar'});
+            var opts = Raven._makeRequest.lastCall.args[0];
+            opts.onSuccess({});
+
+            assert.equal(Raven._backoffStart, null); // clock is at 100ms
+            assert.equal(Raven._backoffDuration, 0);
+        });
     });
 
     describe('makeRequest', function() {
@@ -1187,6 +1280,24 @@ describe('globals', function() {
             assert.equal(this.requests[0].readyState, 0);
 
             window.XDomainRequest = oldXDR
+        });
+
+        it('should pass a request object to onError', function (done) {
+            XMLHttpRequest.prototype.withCredentials = true;
+
+            Raven._makeRequest({
+                url: 'http://localhost/',
+                auth: {a: '1', b: '2'},
+                data: {foo: 'bar'},
+                options: Raven._globalOptions,
+                onError: function (error) {
+                    assert.equal(error.request.status, 429);
+                    done();
+                }
+            });
+
+            var lastXhr = this.requests[this.requests.length - 1];
+            lastXhr.respond(429, {'Content-Type': 'text/html'}, 'Too many requests');
         });
     });
 
@@ -1465,6 +1576,18 @@ describe('Raven (public API)', function() {
             assert.equal(Raven._globalSecret, '');
             assert.equal(Raven._globalEndpoint, 'http://example.com:80/api/2/store/');
             assert.equal(Raven._globalProject, '2');
+        });
+
+        it('should reset the backoff state', function() {
+            Raven.config('//def@lol.com/3');
+
+            Raven._backoffStart = 100;
+            Raven._backoffDuration = 2000;
+
+            Raven.setDSN(SENTRY_DSN);
+
+            assert.equal(Raven._backoffStart, null);
+            assert.equal(Raven._backoffDuration, 0);
         });
     });
 

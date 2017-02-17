@@ -1,16 +1,16 @@
-/*! Raven.js 3.9.1 (79bc1ae) | github.com/getsentry/raven-js */
+/*! Raven.js 3.11.0 (c2f43d7) | github.com/getsentry/raven-js */
 
 /*
  * Includes TraceKit
  * https://github.com/getsentry/TraceKit
  *
- * Copyright 2016 Matt Robenolt and other contributors
+ * Copyright 2017 Matt Robenolt and other contributors
  * Released under the BSD license
  * https://github.com/getsentry/raven-js/blob/master/LICENSE
  *
  */
 
-(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.Raven = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
+(function(f){if(typeof exports==='object'&&typeof module!=='undefined'){module.exports=f()}else if(typeof define==='function'&&define.amd){define([],f)}else{var g;if(typeof window!=='undefined'){g=window}else if(typeof global!=='undefined'){g=global}else if(typeof self!=='undefined'){g=self}else{g=this}g.Raven = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require==='function'&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code='MODULE_NOT_FOUND',f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require==='function'&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
 exports = module.exports = stringify
 exports.getSerialize = serializer
 
@@ -22,8 +22,8 @@ function serializer(replacer, cycleReplacer) {
   var stack = [], keys = []
 
   if (cycleReplacer == null) cycleReplacer = function(key, value) {
-    if (stack[0] === value) return "[Circular ~]"
-    return "[Circular ~." + keys.slice(0, stack.indexOf(value)).join(".") + "]"
+    if (stack[0] === value) return '[Circular ~]'
+    return '[Circular ~.' + keys.slice(0, stack.indexOf(value)).join('.') + ']'
   }
 
   return function(key, value) {
@@ -114,6 +114,7 @@ var _window = typeof window !== 'undefined' ? window
             : typeof self !== 'undefined' ? self
             : {};
 var _document = _window.document;
+var _navigator = _window.navigator;
 
 // First, check for JSON support
 // If there is no JSON, we no-op the core features of Raven
@@ -122,6 +123,7 @@ function Raven() {
     this._hasJSON = !!(typeof JSON === 'object' && JSON.stringify);
     // Raven can run in contexts where there's no document (react-native)
     this._hasDocument = !isUndefined(_document);
+    this._hasNavigator = !isUndefined(_navigator);
     this._lastCapturedException = null;
     this._lastEventId = null;
     this._globalServer = null;
@@ -155,6 +157,7 @@ function Raven() {
     this._keypressTimeout;
     this._location = _window.location;
     this._lastHref = this._location && this._location.href;
+    this._resetBackoff();
 
     for (var method in this._originalConsole) {  // eslint-disable-line guard-for-in
       this._originalConsoleMethods[method] = this._originalConsole[method];
@@ -172,7 +175,7 @@ Raven.prototype = {
     // webpack (using a build step causes webpack #1617). Grunt verifies that
     // this value matches package.json during build.
     //   See: https://github.com/getsentry/raven-js/issues/465
-    VERSION: '3.9.1',
+    VERSION: '3.11.0',
 
     debug: false,
 
@@ -291,6 +294,10 @@ Raven.prototype = {
 
         self._globalEndpoint = self._globalServer +
             '/' + path + 'api/' + self._globalProject + '/store/';
+
+        // Reset backoff state since we may be pointing at a
+        // new project/server
+        this._resetBackoff();
     },
 
     /*
@@ -369,6 +376,10 @@ Raven.prototype = {
             while(i--) args[i] = deep ? self.wrap(options, arguments[i]) : arguments[i];
 
             try {
+                // Attempt to invoke user-land function
+                // NOTE: If you are a Sentry user, and you are seeing this stack frame, it
+                //       means Raven caught an error invoking your application code. This is
+                //       expected behavior and NOT indicative of a bug with Raven.js.
                 return func.apply(this, args);
             } catch(e) {
                 self._ignoreNextOnError();
@@ -544,19 +555,6 @@ Raven.prototype = {
     setUserContext: function(user) {
         // Intentionally do not merge here since that's an unexpected behavior.
         this._globalContext.user = user;
-
-        return this;
-    },
-
-    /*
-     * Set/clear Contexts interface to be sent along with the payload.
-     *
-     * @param {object} contexts An object representing Contexts data [optional]
-     * @return {Raven}
-     */
-    setContextsInterface: function(contexts) {
-        // Intentionally do not merge here since that's an unexpected behavior.
-        this._globalContext.contexts = contexts;
 
         return this;
     },
@@ -1030,15 +1028,6 @@ Raven.prototype = {
         for (var i = 0; i < eventTargets.length; i++) {
             wrapEventTarget(eventTargets[i]);
         }
-
-        var $ = _window.jQuery || _window.$;
-        if ($ && $.fn && $.fn.ready) {
-            fill($.fn, 'ready', function (orig) {
-                return function (fn) {
-                    return orig.call(this, self.wrap(fn));
-                };
-            }, wrappedBuiltIns);
-        }
     },
 
 
@@ -1408,25 +1397,70 @@ Raven.prototype = {
     },
 
     _getHttpData: function() {
-        if (!this._hasDocument || !_document.location || !_document.location.href) {
-            return;
+        if (!this._hasNavigator && !this._hasDocument) return;
+        var httpData = {};
+
+        if (this._hasNavigator && _navigator.userAgent) {
+            httpData.headers = {
+              'User-Agent': navigator.userAgent
+            };
         }
 
-        var httpData = {
-            headers: {
-                'User-Agent': navigator.userAgent
+        if (this._hasDocument) {
+            if (_document.location && _document.location.href) {
+                httpData.url = _document.location.href;
             }
-        };
-
-        httpData.url = _document.location.href;
-
-        if (_document.referrer) {
-            httpData.headers.Referer = _document.referrer;
+            if (_document.referrer) {
+                if (!httpData.headers) httpData.headers = {};
+                httpData.headers.Referer = _document.referrer;
+            }
         }
 
         return httpData;
     },
 
+    _resetBackoff: function() {
+        this._backoffDuration = 0;
+        this._backoffStart = null;
+    },
+
+    _shouldBackoff: function() {
+        return this._backoffDuration && now() - this._backoffStart < this._backoffDuration;
+    },
+
+    _setBackoffState: function(request) {
+        // If we are already in a backoff state, don't change anything
+        if (this._shouldBackoff()) {
+            return;
+        }
+
+        var status = request.status;
+
+        // 400 - project_id doesn't exist or some other fatal
+        // 401 - invalid/revoked dsn
+        // 429 - too many requests
+        if (!(status === 400 || status === 401 || status === 429))
+            return;
+
+        var retry;
+        try {
+            // If Retry-After is not in Access-Control-Expose-Headers, most
+            // browsers will throw an exception trying to access it
+            retry = request.getResponseHeader('Retry-After');
+            retry = parseInt(retry, 10);
+        } catch (e) {
+            /* eslint no-empty:0 */
+        }
+
+
+        this._backoffDuration = retry
+            // If Sentry server returned a Retry-After value, use it
+            ? retry
+            // Otherwise, double the last backoff duration (starts at 1 sec)
+            : this._backoffDuration * 2 || 1000;
+
+        this._backoffStart = now();
+    },
 
     _send: function(data) {
         var globalOptions = this._globalOptions;
@@ -1469,11 +1503,6 @@ Raven.prototype = {
             data.user = this._globalContext.user;
         }
 
-        if (this._globalContext.contexts) {
-            // sentry.interfaces.Contexts
-            data.contexts = this._globalContext.contexts;
-        }
-
         // Include the environment if it's defined in globalOptions
         if (globalOptions.environment) data.environment = globalOptions.environment;
 
@@ -1497,6 +1526,13 @@ Raven.prototype = {
             return;
         }
 
+        // Backoff state: Sentry server previously responded w/ an error (e.g. 429 - too many requests),
+        // so drop requests until "cool-off" period has elapsed.
+        if (this._shouldBackoff()) {
+            this._logDebug('warn', 'Raven dropped error due to backoff: ', data);
+            return;
+        }
+
         this._sendProcessedPayload(data);
     },
 
@@ -1508,6 +1544,8 @@ Raven.prototype = {
         var self = this;
         var globalOptions = this._globalOptions;
 
+        if (!this.isSetup()) return;
+
         // Send along an event_id if not explicitly passed.
         // This event_id can be used to reference the error within Sentry itself.
         // Set lastEventId after we know the error should actually be sent
@@ -1517,8 +1555,6 @@ Raven.prototype = {
         data = this._trimPacket(data);
 
         this._logDebug('debug', 'Raven about to send:', data);
-
-        if (!this.isSetup()) return;
 
         var auth = {
             sentry_version: '7',
@@ -1546,6 +1582,8 @@ Raven.prototype = {
             data: data,
             options: globalOptions,
             onSuccess: function success() {
+                self._resetBackoff();
+
                 self._triggerEvent('success', {
                     data: data,
                     src: url
@@ -1553,6 +1591,12 @@ Raven.prototype = {
                 callback && callback();
             },
             onError: function failure(error) {
+                self._logDebug('error', 'Raven transport failed to send: ', error);
+
+                if (error.request) {
+                    self._setBackoffState(error.request);
+                }
+
                 self._triggerEvent('failure', {
                     data: data,
                     src: url
@@ -1580,7 +1624,9 @@ Raven.prototype = {
                     opts.onSuccess();
                 }
             } else if (opts.onError) {
-                opts.onError(new Error('Sentry error code: ' + request.status));
+                var err = new Error('Sentry error code: ' + request.status);
+                err.request = request;
+                opts.onError(err);
             }
         }
 
@@ -1853,7 +1899,7 @@ function htmlElementAsString(elem) {
 
     className = elem.className;
     if (className && isString(className)) {
-        classes = className.split(' ');
+        classes = className.split(/\s+/);
         for (i = 0; i < classes.length; i++) {
             out.push('.' + classes[i]);
         }
@@ -1912,8 +1958,8 @@ Raven.prototype.setReleaseContext = Raven.prototype.setRelease;
 
 module.exports = Raven;
 
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"1":1,"2":2,"3":3,"6":6}],5:[function(_dereq_,module,exports){
+}).call(this,typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : typeof window !== 'undefined' ? window : {})
+},{'1':1,'2':2,'3':3,'6':6}],5:[function(_dereq_,module,exports){
 (function (global){
 /**
  * Enforces a single instance of the Raven client, and the
@@ -1949,13 +1995,18 @@ Raven.afterLoad();
 
 module.exports = Raven;
 
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"4":4}],6:[function(_dereq_,module,exports){
+}).call(this,typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : typeof window !== 'undefined' ? window : {})
+},{'4':4}],6:[function(_dereq_,module,exports){
 (function (global){
 'use strict';
 
 /*
- TraceKit - Cross brower stack traces - github.com/occ/TraceKit
+ TraceKit - Cross brower stack traces
+
+ This was originally forked from github.com/occ/TraceKit, but has since been
+ largely re-written and is now maintained as part of raven-js.  Tests for
+ this are in test/vendor.
+
  MIT license
 */
 
@@ -1978,7 +2029,7 @@ var UNKNOWN_FUNCTION = '?';
 var ERROR_TYPES_RE = /^(?:Uncaught (?:exception: )?)?((?:Eval|Internal|Range|Reference|Syntax|Type|URI)Error): ?(.*)$/;
 
 function getLocationHref() {
-    if (typeof document === 'undefined')
+    if (typeof document === 'undefined' || typeof document.location === 'undefined')
         return '';
 
     return document.location.href;
@@ -2335,7 +2386,7 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
         if (typeof ex.stack === 'undefined' || !ex.stack) return;
 
         var chrome = /^\s*at (.*?) ?\(((?:file|https?|blob|chrome-extension|native|eval|<anonymous>).*?)(?::(\d+))?(?::(\d+))?\)?\s*$/i,
-            gecko = /^\s*(.*?)(?:\((.*?)\))?(?:^|@)((?:file|https?|blob|chrome|\[native).*?)(?::(\d+))?(?::(\d+))?\s*$/i,
+            gecko = /^\s*(.*?)(?:\((.*?)\))?(?:^|@)((?:file|https?|blob|chrome|resource|\[native).*?)(?::(\d+))?(?::(\d+))?\s*$/i,
             winjs = /^\s*at (?:((?:\[object object\])?.+) )?\(?((?:file|ms-appx|https?|blob):.*?):(\d+)(?::(\d+))?\)?\s*$/i,
             lines = ex.stack.split('\n'),
             stack = [],
@@ -2560,6 +2611,6 @@ TraceKit.computeStackTrace = (function computeStackTraceWrapper() {
 
 module.exports = TraceKit;
 
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+}).call(this,typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : typeof window !== 'undefined' ? window : {})
 },{}]},{},[5])(5)
 });

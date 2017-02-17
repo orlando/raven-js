@@ -23,7 +23,7 @@
 // /var/containers/Bundle/Application/{DEVICE_ID}/HelloWorld.app/main.jsbundle
 
 var PATH_STRIP_RE = /^.*\/[^\.]+(\.app|CodePush)/;
-
+var stringify = require('json-stringify-safe');
 var FATAL_ERROR_KEY = '--rn-fatal--';
 var ASYNC_STORAGE_KEY = '--raven-js-global-error-payload--';
 
@@ -31,9 +31,12 @@ var ASYNC_STORAGE_KEY = '--raven-js-global-error-payload--';
  * Strip device-specific IDs from React Native file:// paths
  */
 function normalizeUrl(url, pathStripRe) {
+  if (url.indexOf('/') !== -1)
     return url
         .replace(/^file\:\/\//, '')
         .replace(pathStripRe, '');
+  else
+    return '/' + url;
 }
 
 /**
@@ -137,7 +140,7 @@ function reactNativePlugin(Raven, options) {
  */
 reactNativePlugin._persistPayload = function(payload) {
     var AsyncStorage = require('react-native').AsyncStorage;
-    return AsyncStorage.setItem(ASYNC_STORAGE_KEY, JSON.stringify(payload))
+    return AsyncStorage.setItem(ASYNC_STORAGE_KEY, stringify(payload))
         ['catch'](function() { return null; });
 }
 
@@ -182,7 +185,9 @@ reactNativePlugin._transport = function (options) {
             }
         } else {
             if (options.onError) {
-                options.onError(new Error('Sentry error code: ' + request.status));
+                var err = new Error('Sentry error code: ' + request.status);
+                err.request = request;
+                options.onError(err);
             }
         }
     };
@@ -198,7 +203,7 @@ reactNativePlugin._transport = function (options) {
     // Just set a phony Origin value; only matters if Sentry Project is configured
     // to whitelist specific origins.
     request.setRequestHeader('Origin', 'react-native://');
-    request.send(JSON.stringify(options.data));
+    request.send(stringify(options.data));
 };
 
 /**
